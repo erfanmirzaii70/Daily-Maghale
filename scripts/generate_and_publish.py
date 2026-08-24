@@ -219,9 +219,9 @@ def upload_image_to_mixin(image_url: str, filename: str):
 
 def build_image_html(url: str, alt_text: str) -> str:
     return (
-        '<figure style="margin:24px 0;text-align:center;">'
-        f'<img src="{url}" alt="{alt_text}" '
-        'style="max-width:100%;height:auto;border-radius:10px;" loading="lazy" />'
+        "<figure style='margin:24px 0;text-align:center;'>"
+        f"<img src='{url}' alt='{alt_text}' "
+        "style='max-width:100%;height:auto;border-radius:10px;' loading='lazy' />"
         "</figure>"
     )
 
@@ -322,14 +322,18 @@ def generate_article(topic: dict) -> dict:
 
 قوانین فرمت‌بندی و ظاهر مقاله (مقاله باید حرفه‌ای و آبرومند به نظر برسه، نه یه متن خشک):
 - بدنه باید HTML معتبر باشه، نه Markdown
+- خیلی مهم: چون این HTML قراره داخل یه رشتهٔ JSON قرار بگیره، توی همهٔ attribute های HTML
+  (مثل style، class، href) حتما از کوتیشن تک ' استفاده کن، نه کوتیشن دابل " — یعنی
+  style='...' درسته، style="..." باعث خراب شدن ساختار JSON میشه. این قانون رو در تمام
+  طول body بدون استثنا رعایت کن.
 - نکات کلیدی، اسم برندها، و هشدارهای مهم رو حتما با <strong> بولد کن (نه بیش از حد، فقط جاهای مهم)
 - حتما یک جدول (<table>) مفید بساز -- مثلا جدول مقایسه مشخصات، جدول علائم خرابی و راه‌حل،
-  یا جدول قیمت/مدل. جدول باید این استایل رو داشته باشه دقیقا:
-  <table style="width:100%;border-collapse:collapse;margin:20px 0;">
-  <thead><tr style="background:#f5f5f5;">
-  <th style="border:1px solid #ddd;padding:10px;text-align:right;">ستون۱</th>...
+  یا جدول قیمت/مدل. جدول باید این استایل رو داشته باشه دقیقا (با کوتیشن تک):
+  <table style='width:100%;border-collapse:collapse;margin:20px 0;'>
+  <thead><tr style='background:#f5f5f5;'>
+  <th style='border:1px solid #ddd;padding:10px;text-align:right;'>ستون۱</th>...
   </tr></thead>
-  <tbody><tr><td style="border:1px solid #ddd;padding:10px;">مقدار</td>...</tr></tbody></table>
+  <tbody><tr><td style='border:1px solid #ddd;padding:10px;'>مقدار</td>...</tr></tbody></table>
 - از لیست‌های <ul><li> برای نکات چندتایی استفاده کن
 - تیترها: H2 برای بخش‌های اصلی، H3 برای زیربخش‌ها و سوالات متداول
 
@@ -363,7 +367,19 @@ def generate_article(topic: dict) -> dict:
     try:
         article = extract_json(raw)
     except Exception as e:
-        fail(f"پارس نشدن مقاله تولیدشده: {e}\nپاسخ خام (۵۰۰ کاراکتر اول): {raw[:500]}")
+        log(f"⚠️ پارس اول JSON شکست خورد ({e}) - یه تلاش دوم می‌کنیم")
+        retry_user = user + (
+            "\n\nمهم: تلاش قبلی JSON نامعتبر تولید کرد (خطا: "
+            + str(e)
+            + "). این‌بار خیلی دقت کن که خروجی JSON کاملا معتبر باشه، مخصوصا اینکه "
+            "همه attribute های HTML با کوتیشن تک ' نوشته بشن نه کوتیشن دابل، و هیچ "
+            "کوتیشن دابل خام (\") داخل مقادیر رشته‌ای JSON نباشه."
+        )
+        raw = call_gemini(system, retry_user, max_tokens=12000)
+        try:
+            article = extract_json(raw)
+        except Exception as e2:
+            fail(f"پارس نشدن مقاله تولیدشده (بعد از تلاش دوم): {e2}\nپاسخ خام (۵۰۰ کاراکتر اول): {raw[:500]}")
 
     required = ["title", "slug", "seo_title", "seo_description", "description", "tags", "body", "images"]
     for key in required:
