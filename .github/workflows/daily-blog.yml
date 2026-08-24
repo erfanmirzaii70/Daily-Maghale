@@ -1,1 +1,43 @@
+name: Daily Blog Post
 
+"on":
+  schedule:
+    # هرروز دوبار: ۰۷:۳۰ و ۱۹:۳۰ به وقت تهران (۰۴:۰۰ و ۱۶:۰۰ UTC)
+    - cron: "0 4 * * *"
+    - cron: "0 16 * * *"
+  workflow_dispatch: {}  # امکان اجرای دستی از تب Actions توی گیت‌هاب
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate and publish article
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MIXIN_API_KEY: ${{ secrets.MIXIN_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          SITE_BASE_URL: ${{ secrets.SITE_BASE_URL }}
+        run: python scripts/generate_and_publish.py
+
+      - name: Commit updated topic history
+        run: |
+          git config user.name "partzune-bot"
+          git config user.email "bot@partzune.ir"
+          git add state/used_topics.json
+          git diff --cached --quiet || git commit -m "chore: log published topic $(date -u +%Y-%m-%d-%H%M)"
+          git pull --rebase
+          git push
