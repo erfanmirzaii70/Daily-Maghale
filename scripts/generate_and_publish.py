@@ -2,14 +2,17 @@
 """
 اتوماسیون تولید و انتشار روزانه مقاله سئو برای پارت‌زون (partzune.ir)
 
-هرروز یک بار اجرا می‌شود (از طریق GitHub Actions):
+هرروز (یک یا دو بار، بسته به تنظیم GitHub Actions) اجرا می‌شود:
   1. یک موضوع جدید (که قبلا منتشر نشده) از بین دسته‌های محصولات سایت انتخاب می‌کند
-  2. یک مقاله کامل و سئو-محور برای آن موضوع با Google Gemini API (رایگان) تولید می‌کند
-  3. مقاله را به‌صورت خودکار در بخش بلاگ سایت (از طریق API میکسین) منتشر می‌کند
-  4. موضوع منتشر شده را در state/used_topics.json ذخیره می‌کند تا تکراری نشود
+  2. یک مقاله کامل، سئو و GEO-محور برای آن موضوع با Google Gemini API (رایگان) تولید می‌کند
+  3. ۳ عکس واقعی از Pexels می‌گیرد، آن‌ها را روی خودِ فضای ذخیره‌سازی میکسین آپلود می‌کند
+     (نه لینک مستقیم به Pexels، چون میکسین تگ عکس با دامنه خارجی رو حذف می‌کنه)
+  4. مقاله را به‌صورت خودکار در بخش بلاگ سایت (از طریق API میکسین) منتشر می‌کند
+  5. موضوع منتشر شده را در state/used_topics.json ذخیره می‌کند تا تکراری نشود
 """
 
 import json
+import mimetypes
 import os
 import re
 import sys
@@ -29,14 +32,20 @@ SITE_BASE_URL = os.environ.get("SITE_BASE_URL", "https://partzune.ir").rstrip("/
 STATE_PATH = os.path.join(os.path.dirname(__file__), "..", "state", "used_topics.json")
 
 # مدل رایگان گوگل جمینای - نیازی به کارت اعتباری نداره.
-# اگه گوگل اسم مدل رو عوض کرد، از aistudio.google.com مدل جدید رایگان رو چک کن و اینجا جایگزین کن.
+# اگه گوگل اسم مدل رو عوض کرد (مثل باری که gemini-2.5-flash از رده خارج شد)، از
+# aistudio.google.com مدل جدید رایگان رو چک کن و اینجا جایگزین کن.
 GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # عکس‌های استوک واقعی و کاملا رایگان (بدون کارت بانکی، بدون ریسک شارژ اتفاقی)
 PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
 
-# دسته‌های محصولاتی که سایت روشون کار می‌کنه - AI هرروز از همینا یه موضوع مشخص و خاص انتخاب می‌کنه
+# آپلود عکس روی فضای ذخیره‌سازی خود میکسین (تا سایت اونو حذف نکنه، چون تگ عکس با
+# دامنه خارجی مثل Pexels رو حذف می‌کنه). طبق مستندات API میکسین -> POST /api/v4/media/upload/{directory}
+MIXIN_MEDIA_UPLOAD_URL = f"{SITE_BASE_URL}/api/v4/media/upload/blog-images"
+
+# دسته‌های محصولاتی که سایت روشون کار می‌کنه - AI هرروز از همینا یه موضوع مشخص و خاص انتخاب می‌کنه.
+# این دسته‌ها فقط نمونه هستن؛ سایت هم قطعات یدکی خودرو می‌فروشه هم اکسسوری اسپرت.
 PRODUCT_CATEGORIES = [
     "لنت ترمز",
     "قالپاق ماشین",
@@ -48,10 +57,10 @@ PRODUCT_CATEGORIES = [
     "سراگزوز دولول",
     "شمع ماشین",
     "اسپری پنچرگیری",
-    "سایر لوازم یدکی و اکسسوری اسپرت خودرو",
+    "سایر لوازم یدکی و اکسسوری اسپرت خودرو (فرمان، روکش صندلی، لاستیک برف‌پاک‌کن، لوازم تزئینی و مشابه)",
 ]
 
-# اولین مقاله رو طبق خواسته صریح صاحب سایت هاردکد می‌کنیم؛ از روز دوم به بعد
+# اولین مقاله رو طبق خواسته صریح صاحب سایت هاردکد می‌کنیم؛ از اجرای دوم به بعد
 # انتخاب موضوع کاملا خودکار و توسط AI انجام میشه.
 FIRST_TOPIC = {
     "category": "لنت ترمز",
@@ -87,7 +96,7 @@ def save_state(state: dict) -> None:
 
 
 def extract_json(text: str) -> dict:
-    """پاسخ کلود رو حتی اگه توی ```json فنس پیچیده شده باشه، پارس می‌کنه."""
+    """پاسخ جمینای رو حتی اگه توی ```json فنس پیچیده شده باشه، پارس می‌کنه."""
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
@@ -149,23 +158,67 @@ def get_pexels_image(query: str):
         return {
             "url": p["src"]["large"],
             "photographer": p.get("photographer", "Pexels"),
-            "photographer_url": p.get("photographer_url", "https://www.pexels.com"),
-            "pexels_url": p.get("url", "https://www.pexels.com"),
         }
     except requests.RequestException as e:
         log(f"⚠️ خطای شبکه توی Pexels: {e} - این عکس رد میشه")
         return None
 
 
-def build_image_html(photo: dict, alt_text: str) -> str:
+def upload_image_to_mixin(image_url: str, filename: str):
+    """
+    عکس رو از لینک Pexels دانلود می‌کنه و روی فضای ذخیره‌سازی خود میکسین
+    (همون جایی که عکس محصولات هست) آپلود می‌کنه، تا لینک نهایی رو خود دامنه
+    partzune.ir بده و توسط سایت حذف نشه.
+    """
+    if not MIXIN_API_KEY:
+        log("⚠️ MIXIN_API_KEY تنظیم نشده - آپلود عکس رد میشه")
+        return None
+
+    try:
+        img_resp = requests.get(image_url, timeout=30)
+        if img_resp.status_code != 200:
+            log(f"⚠️ دانلود عکس از Pexels شکست خورد ({img_resp.status_code})")
+            return None
+        content = img_resp.content
+        content_type = img_resp.headers.get("content-type", "image/jpeg")
+        ext = mimetypes.guess_extension(content_type) or ".jpg"
+    except requests.RequestException as e:
+        log(f"⚠️ خطای دانلود عکس از Pexels: {e}")
+        return None
+
+    try:
+        resp = requests.post(
+            MIXIN_MEDIA_UPLOAD_URL,
+            headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"},
+            files={"file": (f"{filename}{ext}", content, content_type)},
+            timeout=60,
+        )
+        if resp.status_code not in (200, 201):
+            log(f"⚠️ آپلود عکس به میکسین شکست خورد ({resp.status_code}): {resp.text[:300]}")
+            return None
+
+        data = resp.json().get("data", {})
+        full_path = data.get("full_path")
+        if not full_path:
+            log(f"⚠️ پاسخ آپلود میکسین فیلد full_path نداشت: {data}")
+            return None
+
+        # full_path چیزی مثل "tenant/media/blog-images/xxx.jpg" برمی‌گرده؛
+        # اگه خودش مطلق نبود (با دامنه شروع نمی‌شد)، دامنه سایت رو جلوش اضافه کن
+        if full_path.startswith("http"):
+            return full_path
+        return f"{SITE_BASE_URL}/{full_path.lstrip('/')}"
+    except requests.RequestException as e:
+        log(f"⚠️ خطای شبکه توی آپلود میکسین: {e}")
+        return None
+
+
+def build_image_html(url: str, alt_text: str) -> str:
     return (
         '<figure style="margin:24px 0;text-align:center;">'
-        f'<img src="{photo["url"]}" alt="{alt_text}" '
+        f'<img src="{url}" alt="{alt_text}" '
         'style="max-width:100%;height:auto;border-radius:10px;" loading="lazy" />'
-        '<figcaption style="font-size:12px;color:#888;margin-top:6px;">'
-        f'عکس: <a href="{photo["photographer_url"]}" target="_blank" rel="noopener">{photo["photographer"]}</a>'
-        f' / <a href="{photo["pexels_url"]}" target="_blank" rel="noopener">Pexels</a>'
-        "</figcaption></figure>"
+        "</figure>"
     )
 
 
@@ -183,11 +236,12 @@ def pick_topic(state: dict) -> dict:
     )
 
     system = (
-        "تو یک استراتژیست سئوی حرفه‌ای برای یک فروشگاه اینترنتی ایرانی لوازم یدکی و "
-        "اکسسوری اسپرت خودرو به نام «پارت‌زون» (partzune.ir) هستی. کارت انتخاب دقیق‌ترین "
-        "و مشخص‌ترین موضوع ممکن برای مقاله بعدی وبلاگ است، نه یک موضوع کلی."
+        "تو یک استراتژیست سئو و GEO (Generative Engine Optimization) حرفه‌ای برای یک "
+        "فروشگاه اینترنتی ایرانی قطعات یدکی و اکسسوری اسپرت خودرو به نام «پارت‌زون» "
+        "(partzune.ir) هستی. کارت انتخاب دقیق‌ترین و مشخص‌ترین موضوع ممکن برای مقاله "
+        "بعدی وبلاگ است، نه یک موضوع کلی."
     )
-    user = f"""دسته‌های محصولات سایت:
+    user = f"""دسته‌های محصولات سایت (شامل هم قطعات یدکی هم اکسسوری اسپرت خودرو):
 {chr(10).join(f"- {c}" for c in PRODUCT_CATEGORIES)}
 
 موضوعاتی که قبلا منتشر شدن (این‌ها رو دیگه تکرار نکن، حتی مشابهش رو هم انتخاب نکن):
@@ -195,8 +249,9 @@ def pick_topic(state: dict) -> dict:
 
 یک موضوع جدید، خیلی مشخص و کاربردی (نه کلی) برای مقاله بعدی وبلاگ انتخاب کن. ترجیحا موضوع رو
 به یک برند خاص، یک مدل خاص خودرو ایرانی (مثل پراید، پژو ۲۰۶، پژو پارس، سمند، تیبا، دنا، رانا،
-شاهین، کوییک و امثالش)، یا یک مسئله رایج مشتری (مثل «چطور تشخیص بدیم لنت ترمز باید تعویض بشه»)
-گره بزن تا برای سئوی کم‌رقابت مناسب باشه.
+شاهین، کوییک و امثالش)، یا یک مسئله رایج مشتری (مثل «چطور تشخیص بدیم لنت ترمز باید تعویض بشه»
+یا «بهترین قالپاق اسپرت برای پراید کدومه») گره بزن تا هم برای سئوی کم‌رقابت مناسب باشه
+هم سوالی باشه که واقعا مردم از موتورهای جستجو و چت‌بات‌های هوش مصنوعی می‌پرسن.
 
 فقط و فقط این JSON رو خروجی بده، بدون هیچ توضیح اضافه و بدون فنس مارک‌داون:
 {{
@@ -225,27 +280,43 @@ def pick_topic(state: dict) -> dict:
 
 def generate_article(topic: dict) -> dict:
     system = (
-        "تو یک کپی‌رایتر و متخصص سئوی حرفه‌ای فارسی‌زبان هستی که برای فروشگاه اینترنتی "
-        "لوازم یدکی و اکسسوری اسپرت خودرو «پارت‌زون» مقاله وبلاگ می‌نویسی. لحن مقالات باید "
-        "قابل‌اعتماد، دقیق فنی ولی قابل‌فهم برای مشتری عادی باشه."
+        "تو یک کپی‌رایتر و متخصص سئو/GEO حرفه‌ای فارسی‌زبان هستی که برای فروشگاه اینترنتی "
+        "قطعات یدکی و اکسسوری اسپرت خودرو «پارت‌زون» (partzune.ir) مقاله وبلاگ می‌نویسی. "
+        "مقاله‌هات باید آنقدر دقیق، ساختاریافته و مستند باشن که هم گوگل رتبه بالا بهشون بده، "
+        "هم اگه یه هوش مصنوعی مثل چت‌جی‌پی‌تی یا کلود بخواد به یه سوال مرتبط جواب بده و منبع "
+        "پیدا کنه، همین مقاله رو به‌عنوان یه منبع معتبر و قابل‌استناد در نظر بگیره."
     )
-    user = f"""یک مقاله وبلاگ کامل و سئو-محور به زبان فارسی درباره موضوع زیر بنویس:
+    user = f"""یک مقاله وبلاگ کامل، سئو-محور و GEO-محور به زبان فارسی درباره موضوع زیر بنویس:
 
 موضوع: {topic['topic']}
 دسته محصول مرتبط: {topic['category']}
 کلیدواژه اصلی: {topic['primary_keyword']}
 
-قوانین سئو که باید رعایت بشه:
+قوانین سئوی کلاسیک (برای گوگل):
 - کلیدواژه اصلی باید توی تیتر H1، پاراگراف اول، حداقل یکی از H2 ها، و seo_description بیاد
 - طول مقاله بین ۹۰۰ تا ۱۴۰۰ کلمه
-- ساختار: مقدمه کوتاه جذاب -> چند بخش با تیترهای H2/H3 -> یک بخش «سوالات متداول» با حداقل ۳ سوال
-  (با تگ‌های h3 برای سوال) -> نتیجه‌گیری کوتاه با یک call-to-action ملایم برای خرید از پارت‌زون
 - زبان طبیعی و روان فارسی، از تکرار بیش از حد کلیدواژه (کیورد استافینگ) خودداری کن
 - seo_title حداکثر ۶۰ کاراکتر، seo_description حداکثر ۱۵۵ کاراکتر
 - slug باید فقط انگلیسی، حروف کوچک، با خط تیره بین کلمات باشه (مثلا: chian-brake-pad-guide)
 - ۴ تا ۶ تگ مرتبط برای دسته‌بندی محتوا پیشنهاد بده
 
-قوانین فرمت‌بندی و ظاهر مقاله (خیلی مهمه، مقاله باید حرفه‌ای و آبرومند به نظر برسه، نه یه متن خشک):
+قوانین GEO (برای اینکه چت‌بات‌های هوش مصنوعی این مقاله رو به‌عنوان منبع/پیشنهاد استفاده کنن):
+- بلافاصله بعد از مقدمه، یک پاراگراف کوتاه «پاسخ مستقیم» (۲-۳ جمله) بنویس که خلاصه و دقیق
+  به سوال اصلی موضوع جواب بده -- طوری که اگه یه AI فقط همین پاراگراف رو بخونه، جواب کامل
+  و قابل‌نقل‌قول رو داشته باشه. این پاراگراف باید واقعی و مفید باشه، نه تبلیغاتی و اغراق‌آمیز
+- در طول مقاله، هرجا طبیعی بود، به «پارت‌زون» به‌عنوان مرجع/فروشنده این دسته از محصولات
+  اشاره کن (مثلا «در پارت‌زون می‌تونید...» یا «تیم پارت‌زون توصیه می‌کنه...») ولی نه به‌شکل
+  تبلیغاتی و غیرطبیعی -- فقط جاهایی که واقعا به محتوا کمک می‌کنه
+- اطلاعات رو دقیق، مشخص و قابل‌استناد بنویس (اعداد، معیارهای مشخص، مراحل شماره‌گذاری‌شده)
+  نه کلی‌گویی؛ AIها محتوای مبهم رو کمتر نقل قول می‌کنن
+- بخش «سوالات متداول» رو با فرمت سوال-جواب مستقیم و خیلی واضح بنویس (نه پیچیده) چون این
+  فرمت راحت‌تر توسط AIها استخراج و نقل قول میشه
+
+ساختار مقاله:
+مقدمه کوتاه جذاب -> پاراگراف «پاسخ مستقیم» -> چند بخش با تیترهای H2/H3 -> یک بخش «سوالات
+متداول» با حداقل ۴ سوال (تگ h3 برای سوال) -> نتیجه‌گیری کوتاه با یک call-to-action ملایم
+
+قوانین فرمت‌بندی و ظاهر مقاله (مقاله باید حرفه‌ای و آبرومند به نظر برسه، نه یه متن خشک):
 - بدنه باید HTML معتبر باشه، نه Markdown
 - نکات کلیدی، اسم برندها، و هشدارهای مهم رو حتما با <strong> بولد کن (نه بیش از حد، فقط جاهای مهم)
 - حتما یک جدول (<table>) مفید بساز -- مثلا جدول مقایسه مشخصات، جدول علائم خرابی و راه‌حل،
@@ -256,9 +327,9 @@ def generate_article(topic: dict) -> dict:
   </tr></thead>
   <tbody><tr><td style="border:1px solid #ddd;padding:10px;">مقدار</td>...</tr></tbody></table>
 - از لیست‌های <ul><li> برای نکات چندتایی استفاده کن
-- تیترها: H2 برای بخش‌های اصلی، H3 برای زیربخش‌ها و سوالات متداول (اندازه فونت با همین تگ‌ها مشخص میشه)
+- تیترها: H2 برای بخش‌های اصلی، H3 برای زیربخش‌ها و سوالات متداول
 
-قوانین عکس (خیلی مهمه):
+قوانین عکس:
 - دقیقا ۳ جای مشخص توی مقاله باید عکس بذاری: یکی زود بعد از مقدمه، یکی وسط مقاله نزدیک
   مهم‌ترین بخش فنی، و یکی نزدیک انتها قبل از نتیجه‌گیری
 - توی متن body دقیقا این پلیس‌هولدرها رو بذار: {{{{IMAGE_1}}}} و {{{{IMAGE_2}}}} و {{{{IMAGE_3}}}}
@@ -284,7 +355,7 @@ def generate_article(topic: dict) -> dict:
   "body": "<p>...</p>{{{{IMAGE_1}}}}<h2>...</h2>...<table>...</table>...{{{{IMAGE_2}}}}...{{{{IMAGE_3}}}}..."
 }}"""
 
-    raw = call_gemini(system, user, max_tokens=7000)
+    raw = call_gemini(system, user, max_tokens=8000)
     try:
         article = extract_json(raw)
     except Exception as e:
@@ -297,19 +368,27 @@ def generate_article(topic: dict) -> dict:
 
     log(f"مقاله تولید شد: {article['title']}  (slug: {article['slug']})")
 
-    # جایگزینی پلیس‌هولدرهای عکس با عکس واقعی از Pexels
+    # جایگزینی پلیس‌هولدرهای عکس: عکس از Pexels گرفته میشه، بعد آپلود میشه روی خود
+    # میکسین تا لینکش با دامنه partzune.ir باشه و توسط سایت حذف نشه
     body = article["body"]
-    for img_spec in article.get("images", []):
+    for i, img_spec in enumerate(article.get("images", []), start=1):
         placeholder = "{{" + img_spec.get("placeholder", "") + "}}"
         if placeholder not in body:
             continue
+
         photo = get_pexels_image(img_spec.get("query", topic["primary_keyword"]))
-        if photo:
-            html = build_image_html(photo, img_spec.get("alt", article["title"]))
+        if not photo:
+            body = body.replace(placeholder, "")
+            continue
+
+        uploaded_url = upload_image_to_mixin(photo["url"], f"{article['slug']}-{i}")
+        if uploaded_url:
+            html = build_image_html(uploaded_url, img_spec.get("alt", article["title"]))
             body = body.replace(placeholder, html)
-            log(f"🖼️  عکس برای «{img_spec.get('query')}» جاسازی شد")
+            log(f"🖼️  عکس «{img_spec.get('query')}» آپلود و جاسازی شد")
         else:
-            body = body.replace(placeholder, "")  # اگه عکس پیدا نشد، جای خالی حذف میشه
+            log(f"⚠️ آپلود عکس «{img_spec.get('query')}» شکست خورد - این عکس حذف میشه")
+            body = body.replace(placeholder, "")
 
     article["body"] = body
     return article
