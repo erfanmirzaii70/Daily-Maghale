@@ -116,6 +116,10 @@ def call_gemini(system: str, user: str, max_tokens: int = 4000) -> str:
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
                 "temperature": 0.8,
+                # مدل‌های نسل ۳ جمینای (مثل gemini-3.6-flash) یه بخش «تفکر داخلی» دارن که
+                # جزئی از maxOutputTokens حساب میشه و کلا هم خاموش‌شدنی نیست؛ می‌ذاریمش رو
+                # کمترین سطح تا بیشترین سهم توکن برای خودِ خروجی/JSON بمونه.
+                "thinkingConfig": {"thinkingLevel": "low"},
             },
         },
         timeout=120,
@@ -260,7 +264,7 @@ def pick_topic(state: dict) -> dict:
   "primary_keyword": "کلیدواژه اصلی سئو برای این مقاله"
 }}"""
 
-    raw = call_gemini(system, user, max_tokens=500)
+    raw = call_gemini(system, user, max_tokens=2048)
     try:
         topic = extract_json(raw)
     except Exception as e:
@@ -355,7 +359,7 @@ def generate_article(topic: dict) -> dict:
   "body": "<p>...</p>{{{{IMAGE_1}}}}<h2>...</h2>...<table>...</table>...{{{{IMAGE_2}}}}...{{{{IMAGE_3}}}}..."
 }}"""
 
-    raw = call_gemini(system, user, max_tokens=8000)
+    raw = call_gemini(system, user, max_tokens=12000)
     try:
         article = extract_json(raw)
     except Exception as e:
