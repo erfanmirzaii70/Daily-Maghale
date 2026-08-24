@@ -30,7 +30,7 @@ STATE_PATH = os.path.join(os.path.dirname(__file__), "..", "state", "used_topics
 
 # مدل رایگان گوگل جمینای - نیازی به کارت اعتباری نداره.
 # اگه گوگل اسم مدل رو عوض کرد، از aistudio.google.com مدل جدید رایگان رو چک کن و اینجا جایگزین کن.
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # عکس‌های استوک واقعی و کاملا رایگان (بدون کارت بانکی، بدون ریسک شارژ اتفاقی)
