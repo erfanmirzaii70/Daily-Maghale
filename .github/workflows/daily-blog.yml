@@ -1,10 +1,9 @@
 name: Daily Blog Post
 
-on:
+'on':
   schedule:
-    # هرروز ساعت ۰۷:۳۰ به وقت تهران (۰۴:۰۰ UTC)
     - cron: "0 4 * * *"
-  workflow_dispatch: {}  # امکان اجرای دستی از تب Actions توی گیت‌هاب
+  workflow_dispatch:  # امکان اجرای دستی از تب Actions توی گیت‌هاب
 
 permissions:
   contents: write
