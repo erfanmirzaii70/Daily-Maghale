@@ -1,6 +1,6 @@
 name: Daily Blog Post
 
-'on':
+on:
   schedule:
     - cron: "0 4 * * *"
   workflow_dispatch:  # امکان اجرای دستی از تب Actions توی گیت‌هاب
