@@ -16,6 +16,7 @@ import mimetypes
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -136,12 +137,27 @@ def call_gemini(
         # چه موضوعاتی جای خالی دارن یا رقبا ضعیف پوشش دادن
         body["tools"] = [{"google_search": {}}]
 
-    resp = requests.post(
-        f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
-        headers={"content-type": "application/json"},
-        json=body,
-        timeout=180,
-    )
+    # ۴۲۹ (سهمیه لحظه‌ای تموم شده) و ۵۰۳ (سرور موقتا شلوغه) هر دو معمولا با کمی صبر
+    # خودشون درست میشن؛ قبل از fail شدن چندبار با فاصله امتحان می‌کنیم
+    max_retries = 4
+    backoff_seconds = [5, 15, 30, 60]
+    resp = None
+    for attempt in range(max_retries):
+        resp = requests.post(
+            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+            headers={"content-type": "application/json"},
+            json=body,
+            timeout=180,
+        )
+        if resp.status_code == 200:
+            break
+        if resp.status_code in (429, 503) and attempt < max_retries - 1:
+            wait = backoff_seconds[attempt]
+            log(f"⚠️ Gemini API {resp.status_code} - {wait} ثانیه صبر و تلاش دوباره ({attempt + 1}/{max_retries})")
+            time.sleep(wait)
+            continue
+        break
+
     if resp.status_code != 200:
         msg = f"خطای Gemini API ({resp.status_code}): {resp.text[:500]}"
         if fail_on_error:
