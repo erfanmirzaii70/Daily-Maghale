@@ -103,7 +103,19 @@ def extract_json(text: str) -> dict:
     return json.loads(cleaned)
 
 
-def call_gemini(system: str, user: str, max_tokens: int = 4000, use_search: bool = False) -> str:
+def call_gemini(
+    system: str,
+    user: str,
+    max_tokens: int = 4000,
+    use_search: bool = False,
+    fail_on_error: bool = True,
+):
+    """
+    برمی‌گردونه: (متن پاسخ یا None, status_code یا None اگه اصلا درخواست نرفت)
+    اگه fail_on_error=True باشه، در صورت خطا مستقیم fail() می‌کنه (رفتار قبلی).
+    اگه False باشه، خطا رو لاگ می‌کنه و (None, status_code) برمی‌گردونه تا caller خودش
+    تصمیم بگیره (مثلا یه فال‌بک امتحان کنه).
+    """
     if not GEMINI_API_KEY:
         fail("GEMINI_API_KEY تنظیم نشده")
 
@@ -131,15 +143,29 @@ def call_gemini(system: str, user: str, max_tokens: int = 4000, use_search: bool
         timeout=180,
     )
     if resp.status_code != 200:
-        fail(f"خطای Gemini API ({resp.status_code}): {resp.text[:500]}")
+        msg = f"خطای Gemini API ({resp.status_code}): {resp.text[:500]}"
+        if fail_on_error:
+            fail(msg)
+        log(f"⚠️ {msg}")
+        return None, resp.status_code
 
     data = resp.json()
     try:
         candidate = data["candidates"][0]
         parts = candidate["content"]["parts"]
-        return "\n".join(p.get("text", "") for p in parts)
+        return "\n".join(p.get("text", "") for p in parts), 200
     except (KeyError, IndexError):
-        fail(f"پاسخ غیرمنتظره از Gemini: {json.dumps(data, ensure_ascii=False)[:500]}")
+        msg = f"پاسخ غیرمنتظره از Gemini: {json.dumps(data, ensure_ascii=False)[:500]}"
+        if fail_on_error:
+            fail(msg)
+        log(f"⚠️ {msg}")
+        return None, 200
+
+
+def call_gemini_simple(system: str, user: str, max_tokens: int = 4000, use_search: bool = False) -> str:
+    """نسخه ساده که مثل قبل مستقیم متن رو برمی‌گردونه و در صورت خطا fail می‌کنه."""
+    text, _ = call_gemini(system, user, max_tokens=max_tokens, use_search=use_search, fail_on_error=True)
+    return text
 
 
 def get_pexels_image(query: str):
@@ -277,7 +303,18 @@ def pick_topic(state: dict) -> dict:
   "gap_reason": "یک جمله کوتاه که توضیح بده این موضوع چرا جای خالی داره یا رقبا ضعیف پوششش دادن (بر اساس چیزی که واقعا سرچ کردی)"
 }}"""
 
-    raw = call_gemini(system, user, max_tokens=3000, use_search=True)
+    raw, status = call_gemini(system, user, max_tokens=3000, use_search=True, fail_on_error=False)
+    if raw is None:
+        # سهمیه جستجوی زنده (google_search) تموم شده یا خطای دیگه‌ای بوده -> بدون
+        # جستجوی زنده، فقط با دانش خود مدل امتحان کن تا اتوماسیون کامل نخوابه
+        log(f"⚠️ جستجوی زنده وب شکست خورد (status={status})، بدون جستجو دوباره امتحان می‌کنیم")
+        fallback_user = user.replace(
+            "از ابزار جستجوی وب که در اختیارت هست استفاده کن و واقعا این کارو انجام بده:",
+            "(الان دسترسی به جستجوی زنده وب نداری؛ بر اساس دانش عمومی‌ت دربارهٔ بازار قطعات "
+            "یدکی و اکسسوری خودرو ایران و موضوعاتی که معمولا کم پوشش داده میشن حدس بزن):",
+        )
+        raw = call_gemini_simple(system, fallback_user, max_tokens=2000, use_search=False)
+
     try:
         topic = extract_json(raw)
     except Exception as e:
@@ -380,7 +417,7 @@ def generate_article(topic: dict) -> dict:
   "body": "<p>...</p>{{{{IMAGE_1}}}}<h2>...</h2>...<table>...</table>...{{{{IMAGE_2}}}}...{{{{IMAGE_3}}}}..."
 }}"""
 
-    raw = call_gemini(system, user, max_tokens=12000)
+    raw = call_gemini_simple(system, user, max_tokens=12000)
     try:
         article = extract_json(raw)
     except Exception as e:
@@ -392,7 +429,7 @@ def generate_article(topic: dict) -> dict:
             "همه attribute های HTML با کوتیشن تک ' نوشته بشن نه کوتیشن دابل، و هیچ "
             "کوتیشن دابل خام (\") داخل مقادیر رشته‌ای JSON نباشه."
         )
-        raw = call_gemini(system, retry_user, max_tokens=12000)
+        raw = call_gemini_simple(system, retry_user, max_tokens=12000)
         try:
             article = extract_json(raw)
         except Exception as e2:
