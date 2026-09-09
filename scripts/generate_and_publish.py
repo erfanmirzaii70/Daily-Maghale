@@ -101,7 +101,10 @@ def extract_json(text: str) -> dict:
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
-    return json.loads(cleaned)
+    # strict=False: بعضی‌وقتا جمینای داخل رشتهٔ JSON (مثلا فیلد body که HTML چندخطیه)
+    # یه خط جدید خام می‌ذاره به‌جای \n اسکیپ‌شده؛ پارسر پیش‌فرض پایتون رو این حساس و
+    # سخت‌گیره و fail می‌کنه، ولی strict=False این کاراکترهای کنترلی رو قبول می‌کنه.
+    return json.loads(cleaned, strict=False)
 
 
 def call_gemini(
